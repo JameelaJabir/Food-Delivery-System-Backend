@@ -1,229 +1,379 @@
-# Food Delivery System - Food Hub
+# FoodHub — Backend Microservices
+
+<div align="center">
+
+![Node.js](https://img.shields.io/badge/Node.js-18-339933?style=for-the-badge&logo=node.js&logoColor=white)
+![Express](https://img.shields.io/badge/Express.js-000000?style=for-the-badge&logo=express&logoColor=white)
+![MongoDB](https://img.shields.io/badge/MongoDB-47A248?style=for-the-badge&logo=mongodb&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
+![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white)
+![Stripe](https://img.shields.io/badge/Stripe-635BFF?style=for-the-badge&logo=stripe&logoColor=white)
+![JWT](https://img.shields.io/badge/JWT-000000?style=for-the-badge&logo=json-web-tokens&logoColor=white)
+
+A production-grade, cloud-native food delivery platform built on a microservices architecture — containerized with Docker and orchestrated via Kubernetes.
+
+</div>
+
+---
 
 ## Table of Contents
-- [1. Prerequisites](#1-prerequisites)
-- [2. Backend Setup](#2-backend-setup)
-- [3. Kubernetes Deployment](#3-kubernetes-deployment)
-- [4. Frontend Setup](#4-frontend-setup)
-- [5. Verify Installation](#5-verify-installation)
-- [6. Troubleshooting](#6-troubleshooting)
 
-## 1. Prerequisites
+- [Architecture](#architecture)
+- [Microservices](#microservices)
+- [Tech Stack](#tech-stack)
+- [Features](#features)
+- [API Reference](#api-reference)
+- [Getting Started](#getting-started)
+- [Environment Variables](#environment-variables)
+- [Kubernetes Deployment](#kubernetes-deployment)
+- [Troubleshooting](#troubleshooting)
 
-Ensure you have the following tools installed on your system:
+---
 
-- Git
-- Docker Desktop
-- kubectl (Kubernetes command-line tool)
-- minikube (for local Kubernetes cluster) or access to a Kubernetes cluster
-- Node.js and npm (for frontend development)
+## Architecture
 
-## 2. Backend Setup
+```
+                        ┌──────────────────────────────┐
+                        │        NGINX Ingress          │
+                        │  (API Gateway / Load Balancer) │
+                        └──────────────┬───────────────┘
+                                       │
+           ┌───────────────────────────┼───────────────────────────┐
+           │                           │                            │
+  ┌────────▼───────┐      ┌────────────▼────────┐     ┌───────────▼──────┐
+  │  Auth Service  │      │ Restaurant Service   │     │  Order Service   │
+  │   Port: 5000   │      │    Port: 5001        │     │   Port: 5002     │
+  │  JWT + OAuth2  │      │  CRUD + Menu Mgmt    │     │ Orders + Stripe  │
+  └──────┬─────────┘      └────────────┬─────────┘     └───────────┬──────┘
+         │                             │                            │
+  ┌──────▼─────────┐      ┌────────────▼──────────┐   ┌───────────▼──────┐
+  │   MongoDB       │      │      MongoDB           │   │  MongoDB         │
+  │ (users, tokens) │      │ (restaurants, menus)   │   │ (orders)         │
+  └─────────────────┘      └───────────────────────┘   └──────────────────┘
 
-### 2.1 Clone the Repository
+  ┌──────────────────┐     ┌───────────────────────┐
+  │ Delivery Service │     │ Notification Service   │
+  │   Port: 5003     │     │    Port: 5004          │
+  │ Geo Tracking +   │     │  Email (Nodemailer)    │
+  │  Auto-Assign     │     │  SMS (Twilio)          │
+  └───────┬──────────┘     └───────────────────────┘
+          │
+  ┌───────▼──────────┐
+  │    MongoDB        │
+  │  (deliveries)     │
+  └──────────────────┘
+```
+
+Each service is independently deployable, owns its own MongoDB database, and communicates through HTTP APIs routed through the NGINX ingress controller.
+
+---
+
+## Microservices
+
+| Service | Port | Responsibility |
+|---|---|---|
+| **Auth Service** | 5000 | Registration, login, OTP verification, Google OAuth 2.0, JWT |
+| **Restaurant Service** | 5001 | Restaurant CRUD, menu management, availability, ratings |
+| **Order Service** | 5002 | Order lifecycle management, Stripe payments, refunds, webhooks |
+| **Delivery Service** | 5003 | Real-time delivery tracking, geospatial auto-assignment, location updates |
+| **Notification Service** | 5004 | Email & SMS notifications via Nodemailer and Twilio |
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Runtime | Node.js 18 (Alpine) |
+| Framework | Express.js |
+| Database | MongoDB + Mongoose ODM |
+| Authentication | JWT, Passport.js, Google OAuth 2.0 |
+| Payments | Stripe (Payment Intents + Webhooks) |
+| Email | Nodemailer |
+| SMS | Twilio |
+| Containerization | Docker |
+| Orchestration | Kubernetes |
+| Ingress | NGINX Ingress Controller |
+
+---
+
+## Features
+
+### Authentication & Users
+- Multi-role support: `user`, `restaurant_owner`, `delivery_person`, `admin`
+- OTP-based email & SMS verification on registration
+- Google OAuth 2.0 single sign-on
+- Password reset flow with OTP
+- JWT access tokens with secure rotation
+
+### Restaurants & Menus
+- Full CRUD for restaurants and menu items
+- Geospatial indexing (`2dsphere`) for proximity-based restaurant discovery
+- Per-item nutritional info: calories, protein, carbs, fat
+- Real-time availability toggling for restaurants and individual menu items
+- Opening hours management per day of week
+
+### Orders & Payments
+- Full order lifecycle: `PENDING → CONFIRMED → PREPARING → READY_FOR_PICKUP → OUT_FOR_DELIVERY → DELIVERED`
+- Stripe Payment Intents with server-side webhook confirmation
+- Cash on delivery support
+- Automatic refund processing on cancellations
+- Geospatial delivery coordinates stored on each order
+
+### Delivery & Tracking
+- Real-time GPS location updates from delivery personnel
+- Proximity-based auto-assignment: nearest available courier gets the order
+- Full delivery history per courier
+- Geospatial indexes on both pickup and drop-off locations
+
+---
+
+## API Reference
+
+### Auth Service — `/api/auth`
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/register` | — | Register a new user |
+| POST | `/verify-otp` | — | Verify OTP after registration |
+| POST | `/login` | — | Login and receive JWT |
+| POST | `/forgot-password` | — | Request password reset OTP |
+| POST | `/reset-password` | — | Reset password with OTP |
+| GET | `/me` | JWT | Get authenticated user profile |
+| GET | `/google` | — | Initiate Google OAuth |
+| GET | `/google/callback` | — | Google OAuth callback |
+
+### Restaurant Service — `/api/restaurants` & `/api/menu-items`
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/restaurants` | JWT | List all restaurants |
+| GET | `/restaurants/:id` | — | Get restaurant details |
+| POST | `/restaurants` | Owner | Create a restaurant |
+| PUT | `/restaurants/:id` | Owner | Update restaurant |
+| PATCH | `/restaurants/:id/availability` | Owner | Toggle availability |
+| GET | `/restaurants/owner/my-restaurants` | Owner | Owner's restaurants |
+| POST | `/menu-items` | Owner | Create menu item |
+| GET | `/menu-items/restaurant/:id` | — | Get menu for a restaurant |
+| PUT | `/menu-items/:id` | Owner | Update menu item |
+| PATCH | `/menu-items/:id/availability` | Owner | Toggle item availability |
+
+### Order Service — `/api/orders` & `/api/payments`
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/orders` | JWT | Create an order |
+| GET | `/orders` | JWT | Get user's orders |
+| GET | `/orders/:id` | JWT | Get order by ID |
+| PATCH | `/orders/:id/status` | JWT | Update order status |
+| PUT | `/orders/:id/delivery` | JWT | Assign delivery to order |
+| GET | `/orders/ready-for-pickup` | JWT | Orders ready for courier pickup |
+| POST | `/payments/create-payment-intent` | JWT | Create Stripe payment intent |
+| POST | `/payments/confirm-payment` | JWT | Confirm payment |
+| POST | `/payments/webhook` | — | Stripe webhook handler |
+
+### Delivery Service — `/api/deliveries`
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/deliveries` | — | Create a delivery record |
+| GET | `/deliveries/:id` | — | Get delivery by ID |
+| GET | `/deliveries/by-order/:orderId` | — | Get delivery by order ID |
+| PUT | `/deliveries/:id/status` | — | Update delivery status |
+| POST | `/deliveries/:id/location` | — | Push current GPS location |
+| GET | `/deliveries/:id/location` | — | Get current location |
+| PUT | `/deliveries/:id/assign` | — | Manually assign courier |
+| PUT | `/deliveries/:id/auto-assign` | — | Auto-assign to nearest courier |
+| GET | `/deliveries/delivery-person/:id/active` | — | Active deliveries for courier |
+| GET | `/deliveries/delivery-person/:id/history` | — | Delivery history for courier |
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- [Git](https://git-scm.com/)
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+- [kubectl](https://kubernetes.io/docs/tasks/tools/)
+- [minikube](https://minikube.sigs.k8s.io/docs/start/) (for local cluster)
+- [Node.js 18+](https://nodejs.org/) (optional, for running services locally without Docker)
+
+### Clone the Repository
 
 ```bash
 git clone https://github.com/IT22056320/food-delivery-system-backend.git
 cd food-delivery-system-backend
 ```
 
-### 2.2 Configure Secret Files
-
-Each microservice requires configuration via secret YAML files. Template files are provided, but you need to set up your own secret values.
-
-1. Navigate to each microservice directory and copy the template secret files:
+### Run a Single Service Locally
 
 ```bash
-# For auth-service
-cp k8s/auth-service/auth-secrets.yaml.template k8s/auth-service/auth-secrets.yaml
-
-# For order-service
-cp k8s/order-service/order-secrets.yaml.template k8s/order-service/order-secrets.yaml
-
-# For restaurant-service
-cp k8s/restaurant-service/restaurant-secrets.yaml.template k8s/restaurant-service/restaurant-secrets.yaml
-
-# For delivery-service
-cp k8s/delivery-service/delivery-secrets.yaml.template k8s/delivery-service/delivery-secrets.yaml
-
-# For payment-service
-cp k8s/payment-service/payment-secrets.yaml.template k8s/payment-service/payment-secrets.yaml
-
-# For notification-service
-cp k8s/notification-service/notification-secrets.yaml.template k8s/notification-service/notification-secrets.yaml
+cd services/auth-service
+npm install
+npm run dev
 ```
 
-2. Edit each secrets file with your configuration values (database credentials, API keys, etc.)
+Repeat for any other service. Ensure each `.env` file is configured first.
 
-## 3. Kubernetes Deployment
+---
 
-### 3.1 Start Your Kubernetes Cluster
+## Environment Variables
 
-If using minikube:
+Each service uses its own `.env` file. Copy the provided templates and fill in your values.
+
+### Auth Service
+
+```env
+PORT=5000
+MONGO_URI=mongodb+srv://<user>:<pass>@cluster.mongodb.net/auth-db
+JWT_SECRET=your_jwt_secret
+JWT_EXPIRES_IN=7d
+GOOGLE_CLIENT_ID=your_google_client_id
+GOOGLE_CLIENT_SECRET=your_google_client_secret
+GOOGLE_CALLBACK_URL=http://localhost:5000/api/auth/google/callback
+NOTIFICATION_SERVICE_URL=http://localhost:5004
+```
+
+### Restaurant Service
+
+```env
+PORT=5001
+MONGO_URI=mongodb+srv://<user>:<pass>@cluster.mongodb.net/restaurant-db
+JWT_SECRET=your_jwt_secret
+```
+
+### Order Service
+
+```env
+PORT=5002
+MONGO_URI=mongodb+srv://<user>:<pass>@cluster.mongodb.net/order-db
+JWT_SECRET=your_jwt_secret
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+```
+
+### Delivery Service
+
+```env
+PORT=5003
+MONGO_URI=mongodb+srv://<user>:<pass>@cluster.mongodb.net/delivery-db
+JWT_SECRET=your_jwt_secret
+```
+
+### Notification Service
+
+```env
+PORT=5004
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_USER=your@email.com
+EMAIL_PASS=your_app_password
+TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxx
+TWILIO_AUTH_TOKEN=your_twilio_token
+TWILIO_PHONE_NUMBER=+1234567890
+```
+
+---
+
+## Kubernetes Deployment
+
+### 1. Start Your Cluster
 
 ```bash
 minikube start
+minikube addons enable ingress
 ```
 
-### 3.2 Apply Kubernetes Configurations
+### 2. Configure Kubernetes Secrets
 
-Deploy all services with a single command:
+```bash
+cp k8s/auth-service/auth-secrets.yaml.template k8s/auth-service/auth-secrets.yaml
+cp k8s/order-service/order-secrets.yaml.template k8s/order-service/order-secrets.yaml
+cp k8s/restaurant-service/restaurant-secrets.yaml.template k8s/restaurant-service/restaurant-secrets.yaml
+cp k8s/delivery-service/delivery-secrets.yaml.template k8s/delivery-service/delivery-secrets.yaml
+cp k8s/notification-service/notification-secrets.yaml.template k8s/notification-service/notification-secrets.yaml
+```
+
+Edit each file with your real credentials before applying.
+
+### 3. Deploy All Services
 
 ```bash
 kubectl apply -f k8s/
 ```
 
-Alternatively, you can deploy services individually:
+Or deploy individually:
 
 ```bash
-# Deploy auth service
 kubectl apply -f k8s/auth-service/
-
-# Deploy order service
-kubectl apply -f k8s/order-service/
-
-# Deploy restaurant service
 kubectl apply -f k8s/restaurant-service/
-
-# Deploy delivery service
+kubectl apply -f k8s/order-service/
 kubectl apply -f k8s/delivery-service/
-
-# Deploy payment service
-kubectl apply -f k8s/payment-service/
-
-# Deploy notification service
 kubectl apply -f k8s/notification-service/
 ```
 
-### 3.3 Verify Deployments
-
-Check if all pods are running:
-
-```bash
-kubectl get pods
-```
-
-Check services:
-
-```bash
-kubectl get services
-```
-
-### 3.4 Set Up Ingress
-
-Apply the ingress configuration:
+### 4. Apply Ingress
 
 ```bash
 kubectl apply -f k8s/restaurant-service/ingress.yaml
 ```
 
-If using minikube, enable the ingress addon:
+### 5. Verify Everything is Running
 
 ```bash
-minikube addons enable ingress
-```
-
-## 4. Frontend Setup
-
-### 4.1 Clone the Frontend Repository
-
-```bash
-git clone https://github.com/IT22056320/food-delivery-system-frontend.git
-cd food-delivery-system-frontend
-```
-
-### 4.2 Install Dependencies
-
-```bash
-npm install
-```
-
-### 4.3 Configure Environment Variables
-
-Copy the template environment file and modify it with your backend API endpoints:
-
-```bash
-cp .env.template .env.local
-```
-
-Edit `.env.local` to match your Kubernetes service endpoints.
-
-### 4.4 Run the Frontend Development Server
-
-```bash
-npm run dev
-```
-
-The frontend will be available at `http://localhost:3000`.
-
-## 5. Verify Installation
-
-### 5.1 Test Backend Services
-
-Verify that each microservice is accessible:
-
-```bash
-# Get the URL for accessing the services
-kubectl get ingress
-
-# Test auth service
-curl http://<ingress-address>/api/auth/health
-
-# Test order service
-curl http://<ingress-address>/api/orders/health
-
-# Test restaurant service
-curl http://<ingress-address>/api/restaurants/health
-
-# Test delivery service
-curl http://<ingress-address>/api/delivery/health
-
-# Test payment service
-curl http://<ingress-address>/api/payments/health
-
-# Test notification service
-curl http://<ingress-address>/api/notifications/health
-```
-
-### 5.2 Access the Frontend
-
-Open your browser and navigate to `http://localhost:3000` to access the food hub frontend.
-
-## 6. Troubleshooting
-
-### 6.1 Check Kubernetes Pod Logs
-
-If a service is not working correctly, check its logs:
-
-```bash
-# List all pods
 kubectl get pods
+kubectl get services
+kubectl get ingress
+```
 
-# View logs for a specific pod
+### 6. Health Check
+
+```bash
+INGRESS=$(kubectl get ingress -o jsonpath='{.items[0].status.loadBalancer.ingress[0].ip}')
+
+curl http://$INGRESS/api/auth/health
+curl http://$INGRESS/api/restaurants/health
+curl http://$INGRESS/api/orders/health
+curl http://$INGRESS/api/deliveries/health
+curl http://$INGRESS/api/notifications/health
+```
+
+---
+
+## Troubleshooting
+
+**Pods not starting**
+```bash
+kubectl describe pod <pod-name>
 kubectl logs <pod-name>
 ```
 
-### 6.2 Check Kubernetes Events
-
+**Ingress not routing traffic**
 ```bash
 kubectl get events
+kubectl describe ingress
 ```
 
-### 6.3 Common Issues
-
-- **Secret Configuration**: Ensure all secret files are properly configured with valid credentials.
-- **Network Connectivity**: Verify that services can communicate with each other and with any external dependencies.
-- **Resource Constraints**: Check if your Kubernetes cluster has sufficient resources to run all services.
-- **Ingress Setup**: Confirm that the ingress controller is properly configured and running.
-
-### 6.4 Rebuilding Services
-
-If you need to rebuild and redeploy a service:
-
+**Rebuilding a service after code changes**
 ```bash
-# Delete the deployment
 kubectl delete deployment <service-name>
-
-# Apply the configuration again
 kubectl apply -f k8s/<service-name>/
 ```
+
+**Common issues**
+- Ensure all `*-secrets.yaml` files exist with valid values before applying.
+- Verify your MongoDB Atlas cluster allows connections from your Kubernetes cluster's IP.
+- For Stripe webhooks locally, use the [Stripe CLI](https://stripe.com/docs/stripe-cli) to forward events.
+
+---
+
+## Related Repository
+
+[FoodHub Frontend](https://github.com/IT22056320/food-delivery-system-frontend) — Next.js 15 customer, restaurant owner, delivery, and admin dashboards.
+
+---
+
+<div align="center">
+Built with Node.js · Express · MongoDB · Docker · Kubernetes
+</div>
